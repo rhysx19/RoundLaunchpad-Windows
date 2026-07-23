@@ -14,11 +14,9 @@
     <Version>1.0.0</Version>
     <Description>Radial cosmos app launcher for Windows</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- WinForms only for NotifyIcon tray; WPF is the UI -->
-    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
   </PropertyGroup>
   <ItemGroup>
-    <Resource Include="Assets\AppIcon.ico" Condition="Exists('Assets\AppIcon.ico')" />
-    <None Include="Assets\AppIcon.ico" Condition="Exists('Assets\AppIcon.ico')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\AppIcon.png" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\AppIcon.png')" />
   </ItemGroup>
 </Project>
