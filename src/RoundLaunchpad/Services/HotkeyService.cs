@@ -38,11 +38,11 @@ public sealed class HotkeyService : IDisposable
         _source?.AddHook(WndProc);
 
         // MOD_ALT | MOD_NOREPEAT, VK_SPACE
-        _registered = RegisterHotKey(hwnd, HotkeyId, MOD_ALT | MOD_NOREPEAT, VK_SPACE);
+        _registered = RegisterHotKey(hwnd, HotkeyId, MOD_ALT | MOD_NOREPEAT, (uint)VK_SPACE);
         if (!_registered)
         {
             // Fallback: Ctrl+Alt+Space if Alt+Space is taken
-            _registered = RegisterHotKey(hwnd, HotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE);
+            _registered = RegisterHotKey(hwnd, HotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)VK_SPACE);
         }
 
         _releasePoll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
@@ -168,7 +168,7 @@ public sealed class HotkeyService : IDisposable
     private const uint MOD_ALT = 0x0001;
     private const uint MOD_CONTROL = 0x0002;
     private const uint MOD_NOREPEAT = 0x4000;
-    private const uint VK_SPACE = 0x20;
+    private const int VK_SPACE = 0x20;
     private const int VK_MENU = 0x12; // Alt
     private const int WH_KEYBOARD_LL = 13;
 

@@ -13,7 +13,7 @@ public static class IconCache
     private static readonly Dictionary<string, ImageSource> Icons = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Color> Glows = new(StringComparer.OrdinalIgnoreCase);
 
-    public static ImageSource Icon(string path, int size = 96)
+    public static ImageSource GetIcon(string path, int size = 96)
     {
         var key = $"{path}#{size}";
         if (Icons.TryGetValue(key, out var cached)) return cached;
@@ -67,7 +67,7 @@ public static class IconCache
         return Fallback(size);
     }
 
-    private static Icon? Extract(string path, int size)
+    private static System.Drawing.Icon? Extract(string path, int size)
     {
         try
         {
@@ -80,7 +80,7 @@ public static class IconCache
             var hr = SHGetFileInfo(path, FILE_ATTRIBUTE_NORMAL, ref sh, (uint)Marshal.SizeOf<SHFILEINFO>(), flags);
             if (hr != IntPtr.Zero && sh.hIcon != IntPtr.Zero)
             {
-                var icon = (Icon)Icon.FromHandle(sh.hIcon).Clone();
+                var icon = (System.Drawing.Icon)System.Drawing.Icon.FromHandle(sh.hIcon).Clone();
                 DestroyIcon(sh.hIcon);
                 return icon;
             }
@@ -89,7 +89,7 @@ public static class IconCache
 
         try
         {
-            return Icon.ExtractAssociatedIcon(path);
+            return System.Drawing.Icon.ExtractAssociatedIcon(path);
         }
         catch
         {
@@ -119,7 +119,7 @@ public static class IconCache
     {
         try
         {
-            var src = Icon(path, 32) as BitmapSource;
+            var src = GetIcon(path, 32) as BitmapSource;
             if (src == null) return Colors.White;
 
             var conv = new FormatConvertedBitmap(src, PixelFormats.Bgra32, null, 0);
@@ -156,10 +156,10 @@ public static class IconCache
                 var rr = red[best] / weight[best];
                 var gg = green[best] / weight[best];
                 var bb = blue[best] / weight[best];
-                RgbToHsb(rr, gg, bb, out var h, out var s, out var v);
-                s = Math.Min(s * 1.15, 1.0);
-                v = Math.Max(v, 0.8);
-                HsbToRgb(h, s, v, out rr, out gg, out bb);
+                RgbToHsb(rr, gg, bb, out var hue2, out var sat2, out var val2);
+                sat2 = Math.Min(sat2 * 1.15, 1.0);
+                val2 = Math.Max(val2, 0.8);
+                HsbToRgb(hue2, sat2, val2, out rr, out gg, out bb);
                 return Color.FromRgb((byte)(rr * 255), (byte)(gg * 255), (byte)(bb * 255));
             }
         }

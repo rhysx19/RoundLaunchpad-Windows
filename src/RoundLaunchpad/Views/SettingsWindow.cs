@@ -173,7 +173,7 @@ public class SettingsWindow : Window
 
             var img = new Image
             {
-                Source = IconCache.Icon(app.Path, 32),
+                Source = IconCache.GetIcon(app.Path, 32),
                 Width = 22,
                 Height = 22,
                 Margin = new Thickness(0, 0, 10, 0),

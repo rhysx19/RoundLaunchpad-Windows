@@ -15,3 +15,4 @@ global using MessageBox = System.Windows.MessageBox;
 global using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 global using HorizontalAlignment = System.Windows.HorizontalAlignment;
 global using VerticalAlignment = System.Windows.VerticalAlignment;
+global using Pen = System.Windows.Media.Pen;

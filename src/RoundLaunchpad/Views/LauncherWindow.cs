@@ -605,7 +605,7 @@ internal sealed class AppIconElement : Grid
 
         _image = new Image
         {
-            Source = IconCache.Icon(app.Path, (int)size),
+            Source = IconCache.GetIcon(app.Path, (int)size),
             Width = size,
             Height = size,
             Stretch = Stretch.Uniform
