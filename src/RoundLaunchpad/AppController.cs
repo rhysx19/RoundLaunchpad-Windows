@@ -6,7 +6,6 @@ using RoundLaunchpad.Models;
 using RoundLaunchpad.Services;
 using RoundLaunchpad.Views;
 using Forms = System.Windows.Forms;
-using Point = System.Windows.Point;
 
 namespace RoundLaunchpad;
 
