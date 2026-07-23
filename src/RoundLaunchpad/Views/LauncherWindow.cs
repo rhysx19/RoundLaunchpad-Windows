@@ -37,7 +37,6 @@ public class LauncherWindow : Window
     private DateTime _flickerStart = DateTime.UtcNow;
     private string? _warpTargetId;
     private DateTime? _warpBegan;
-    private bool _appeared;
     private string? _currentSelection;
     private double _lastHoverExit;
     private const double IconSize = 96;
@@ -204,7 +203,6 @@ public class LauncherWindow : Window
         Keyboard.Focus(this);
         RefreshRunning();
         BuildRing();
-        _appeared = true;
         AnimateIn();
 
         _runningTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };

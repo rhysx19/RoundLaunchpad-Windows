@@ -1,7 +1,6 @@
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
 
 namespace RoundLaunchpad.Services;
 
@@ -52,21 +51,14 @@ public static class LoginItem
     {
         try
         {
+            // Single-file publish: Location is empty; prefer process path / base dir.
             var process = Environment.ProcessPath;
             if (!string.IsNullOrEmpty(process) && File.Exists(process))
                 return process;
-        }
-        catch { /* ignore */ }
 
-        try
-        {
-            var loc = Assembly.GetExecutingAssembly().Location;
-            if (loc.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-            {
-                var candidate = Path.ChangeExtension(loc, ".exe");
-                if (File.Exists(candidate)) return candidate;
-            }
-            if (File.Exists(loc)) return loc;
+            var baseDir = AppContext.BaseDirectory;
+            var candidate = Path.Combine(baseDir, "RoundLaunchpad.exe");
+            if (File.Exists(candidate)) return candidate;
         }
         catch { /* ignore */ }
 
