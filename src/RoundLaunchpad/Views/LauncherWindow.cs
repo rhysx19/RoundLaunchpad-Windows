@@ -532,8 +532,7 @@ public class LauncherWindow : Window
                 Step(1);
                 e.Handled = true;
                 break;
-            case Key.Enter:
-            case Key.Return:
+            case Key.Enter: // also Key.Return (same value in WPF)
                 if (_session.LaunchRequestId == null && _session.SelectedId != null)
                     _session.LaunchRequestId = _session.SelectedId;
                 e.Handled = true;

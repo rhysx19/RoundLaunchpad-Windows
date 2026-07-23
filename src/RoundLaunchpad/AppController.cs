@@ -80,7 +80,6 @@ public sealed class AppController : IDisposable
     {
         if (_launcher != null) return;
 
-        Point? center = null;
         if (_store.OpenAtMouse)
         {
             var mouse = Forms.Control.MousePosition;
