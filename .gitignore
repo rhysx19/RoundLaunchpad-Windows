@@ -1,0 +1,13 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+*.suo
+*.exe
+*.pdb
+*.dll
+!src/**/Assets/**
+.DS_Store
+*.log
+TestResults/

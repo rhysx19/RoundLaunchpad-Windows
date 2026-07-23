@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore RoundLaunchpad.sln
+
+      - name: Build
+        run: dotnet build RoundLaunchpad.sln -c Release --no-restore
+
+      - name: Publish (self-contained single-file x64)
+        run: >
+          dotnet publish src/RoundLaunchpad/RoundLaunchpad.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=embedded
+          -o publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoundLaunchpad-win-x64
+          path: publish/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Zip for release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish/* -DestinationPath RoundLaunchpad-win-x64.zip -Force
+
+      - name: Create / update rolling prerelease
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous build
+          prerelease: true
+          body: |
+            Latest Windows build from `main`.
+            Download **RoundLaunchpad-win-x64.zip**, unzip, run `RoundLaunchpad.exe`.
+          files: RoundLaunchpad-win-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
