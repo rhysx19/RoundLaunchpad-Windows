@@ -10,7 +10,7 @@
     <AssemblyName>RoundLaunchpad</AssemblyName>
     <RootNamespace>RoundLaunchpad</RootNamespace>
     <Product>RoundLaunchpad</Product>
-    <Company>rhysx19</Company>
+    <Company>RoundLaunchpad</Company>
     <Version>1.0.0</Version>
     <Description>Radial cosmos app launcher for Windows</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
