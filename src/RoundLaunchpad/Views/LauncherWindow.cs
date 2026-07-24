@@ -3,7 +3,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using RoundLaunchpad.Models;
@@ -21,22 +20,28 @@ public class LauncherWindow : Window
     private readonly CosmosBackground _cosmos;
     private readonly Grid _root;
     private readonly Dictionary<string, AppIconElement> _icons = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Ellipse _beam;
-    private readonly RotateTransform _beamRotate = new();
-    private readonly ScaleTransform _beamScale = new(1, 1);
+    private readonly Canvas _beamLayer;
+    private readonly Path _beamCore;
+    private readonly Path _beamSoft;
+    private readonly Path _beamHalo;
     private readonly TextBlock _nameLabel;
     private readonly Border _emptyState;
     private HashSet<string> _running = new(StringComparer.OrdinalIgnoreCase);
     private DispatcherTimer? _runningTimer;
-    private DispatcherTimer? _beamFlickerTimer;
+    private DispatcherTimer? _beamTimer;
     private Point? _centerOverride;
     private double _orbitRadius;
     private double _ringExtent;
     private double _beamAngle = -Math.PI / 2;
+    private double _beamDisplayAngle = -Math.PI / 2;
+    private double _beamTargetAngle = -Math.PI / 2;
+    private bool _beamAnimating;
+    private DateTime _beamAnimStart;
+    private double _beamAnimFrom;
+    private double _beamAnimTo;
     private Color _beamColor = Colors.White;
     private DateTime _flickerStart = DateTime.UtcNow;
     private string? _warpTargetId;
-    private DateTime? _warpBegan;
     private string? _currentSelection;
     private double _lastHoverExit;
     private const double IconSize = 96;
@@ -58,35 +63,23 @@ public class LauncherWindow : Window
         ResizeMode = ResizeMode.NoResize;
         Focusable = true;
 
-        _cosmos = new CosmosBackground { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+        _cosmos = new CosmosBackground
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
 
         _ringCanvas = new Canvas { IsHitTestVisible = true };
 
-        _beam = new Ellipse
-        {
-            Width = 40,
-            Height = 400,
-            Opacity = 0,
-            IsHitTestVisible = false,
-            Fill = new LinearGradientBrush
-            {
-                StartPoint = new Point(0.5, 1),
-                EndPoint = new Point(0.5, 0),
-                GradientStops =
-                {
-                    new GradientStop(Colors.Transparent, 0),
-                    new GradientStop(Color.FromArgb(100, 255, 255, 255), 0.55),
-                    new GradientStop(Color.FromArgb(200, 255, 255, 255), 1),
-                }
-            },
-            Effect = new BlurEffect { Radius = 10 }
-        };
-        var beamOrigin = new TransformGroup();
-        beamOrigin.Children.Add(new TranslateTransform(-20, -400));
-        beamOrigin.Children.Add(_beamScale);
-        beamOrigin.Children.Add(_beamRotate);
-        _beam.RenderTransform = beamOrigin;
-        _beam.RenderTransformOrigin = new Point(0.5, 1);
+        // Beam layers: wide halo + soft mid + brighter core (no BlurEffect —
+        // effects often fail on AllowsTransparency windows).
+        _beamHalo = MakeBeamPath(isHitTestVisible: false);
+        _beamSoft = MakeBeamPath(isHitTestVisible: false);
+        _beamCore = MakeBeamPath(isHitTestVisible: false);
+        _beamLayer = new Canvas { IsHitTestVisible = false, Opacity = 0 };
+        _beamLayer.Children.Add(_beamHalo);
+        _beamLayer.Children.Add(_beamSoft);
+        _beamLayer.Children.Add(_beamCore);
 
         _nameLabel = new TextBlock
         {
@@ -142,7 +135,6 @@ public class LauncherWindow : Window
         overlay.Children.Add(_emptyState);
         _root.Children.Add(overlay);
 
-        // Click background to dismiss
         _cosmos.MouseLeftButtonDown += (_, _) => _onDismiss();
 
         Content = _root;
@@ -164,6 +156,13 @@ public class LauncherWindow : Window
         MouseMove += OnMouseMove;
         Deactivated += (_, _) => _onDismiss();
     }
+
+    private static Path MakeBeamPath(bool isHitTestVisible) => new()
+    {
+        IsHitTestVisible = isHitTestVisible,
+        Stretch = Stretch.None,
+        StrokeThickness = 0
+    };
 
     private Border BuildEmptyState()
     {
@@ -209,15 +208,16 @@ public class LauncherWindow : Window
         _runningTimer.Tick += (_, _) => RefreshRunning();
         _runningTimer.Start();
 
-        _beamFlickerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
-        _beamFlickerTimer.Tick += (_, _) => UpdateBeamFlicker();
-        _beamFlickerTimer.Start();
+        // ~30 fps: beam flicker + angle lerp (matches Mac TimelineView)
+        _beamTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        _beamTimer.Tick += (_, _) => TickBeam();
+        _beamTimer.Start();
     }
 
     protected override void OnClosed(EventArgs e)
     {
         _runningTimer?.Stop();
-        _beamFlickerTimer?.Stop();
+        _beamTimer?.Stop();
         base.OnClosed(e);
     }
 
@@ -227,7 +227,6 @@ public class LauncherWindow : Window
         {
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
-        _root.BeginAnimation(OpacityProperty, fade);
         _root.Opacity = 0;
         _root.BeginAnimation(OpacityProperty, fade);
     }
@@ -242,9 +241,7 @@ public class LauncherWindow : Window
         _ringExtent = _orbitRadius + IconSize / 2 + 12;
 
         var center = GetCenter();
-        Canvas.SetLeft(_beam, center.X);
-        Canvas.SetTop(_beam, center.Y);
-        _ringCanvas.Children.Add(_beam);
+        _ringCanvas.Children.Add(_beamLayer);
 
         if (_store.Apps.Count == 0)
         {
@@ -282,7 +279,6 @@ public class LauncherWindow : Window
             el.SetRunning(AppLauncher.IsRunning(app.Path, _running));
         }
 
-        // Option chip below ring
         if (_root.Children[1] is Canvas overlay)
         {
             foreach (var child in overlay.Children.OfType<Border>())
@@ -294,13 +290,18 @@ public class LauncherWindow : Window
                 }
             }
         }
+
+        // Initial beam geometry (hidden until selection)
+        RedrawBeam(_beamDisplayAngle, intensity: 0.9, widthFactor: 1.0);
     }
 
     private void PlaceIcon(AppIconElement el, int index, Point center)
     {
         var angle = AngleFor(index);
-        var x = center.X + _orbitRadius * Math.Cos(angle) - IconSize / 2;
-        var y = center.Y + _orbitRadius * Math.Sin(angle) - IconSize / 2;
+        // Element is larger than the icon to leave room for the glow.
+        var box = el.BoxSize;
+        var x = center.X + _orbitRadius * Math.Cos(angle) - box / 2;
+        var y = center.Y + _orbitRadius * Math.Sin(angle) - box / 2;
         Canvas.SetLeft(el, x);
         Canvas.SetTop(el, y);
     }
@@ -325,7 +326,6 @@ public class LauncherWindow : Window
 
     private static void PositionAt(FrameworkElement el, double x, double y)
     {
-        // empty state is in overlay canvas
         Canvas.SetLeft(el, x);
         Canvas.SetTop(el, y);
     }
@@ -342,7 +342,8 @@ public class LauncherWindow : Window
         if (newId == null || !_store.Apps.Any(a => a.Id == newId))
         {
             _lastHoverExit = Environment.TickCount64 / 1000.0;
-            _beam.Opacity = 0;
+            _beamLayer.Opacity = 0;
+            _beamAnimating = false;
             if (nameBorder != null) nameBorder.Visibility = Visibility.Collapsed;
             return;
         }
@@ -355,29 +356,28 @@ public class LauncherWindow : Window
         var sweeping = prev != null || now - _lastHoverExit < 0.2;
         _beamColor = IconCache.GlowColor(app.Path);
 
+        // Shortest path around the circle (same as Mac).
+        while (target - _beamAngle > Math.PI) target -= 2 * Math.PI;
+        while (_beamAngle - target > Math.PI) target += 2 * Math.PI;
+
         if (sweeping)
         {
-            while (target - _beamAngle > Math.PI) target -= 2 * Math.PI;
-            while (_beamAngle - target > Math.PI) target += 2 * Math.PI;
-            // Beam defaults pointing up; Mac angle -π/2 is up → WPF degrees = rad·180/π + 90
-            var fromDeg = _beamAngle * 180 / Math.PI + 90;
-            var toDeg = target * 180 / Math.PI + 90;
-            var anim = new DoubleAnimation(fromDeg, toDeg, TimeSpan.FromMilliseconds(280))
-            {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-            };
-            _beamRotate.BeginAnimation(RotateTransform.AngleProperty, anim);
-            _beamAngle = target;
+            _beamAnimFrom = _beamDisplayAngle;
+            // Normalize display angle near target for smooth lerp
+            while (_beamAnimFrom - target > Math.PI) _beamAnimFrom -= 2 * Math.PI;
+            while (target - _beamAnimFrom > Math.PI) _beamAnimFrom += 2 * Math.PI;
+            _beamAnimTo = target;
+            _beamAnimStart = DateTime.UtcNow;
+            _beamAnimating = true;
         }
         else
         {
-            _beamRotate.BeginAnimation(RotateTransform.AngleProperty, null);
-            _beamRotate.Angle = target * 180 / Math.PI + 90;
-            _beamAngle = target;
+            _beamAnimating = false;
+            _beamDisplayAngle = target;
         }
-
-        UpdateBeamBrush();
-        _beam.Opacity = 1;
+        _beamAngle = target;
+        _beamTargetAngle = target;
+        _beamLayer.Opacity = 1;
 
         // Name label
         _nameLabel.Text = ShortcutResolver.DisplayName(app.Path);
@@ -390,7 +390,6 @@ public class LauncherWindow : Window
             var center = GetCenter();
             var labelRadius = _orbitRadius + IconSize / 2 + 34;
             var angle = AngleFor(index);
-            // Measure
             _nameLabel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             var sz = _nameLabel.DesiredSize;
             Canvas.SetLeft(nameBorder, center.X + labelRadius * Math.Cos(angle) - sz.Width / 2 - 11);
@@ -398,33 +397,101 @@ public class LauncherWindow : Window
         }
     }
 
-    private void UpdateBeamBrush()
+    private void TickBeam()
     {
-        var c = _beamColor;
-        _beam.Fill = new LinearGradientBrush
+        if (_session.SelectedId == null || _warpTargetId != null)
+            return;
+
+        if (_beamAnimating)
         {
-            StartPoint = new Point(0.5, 1),
-            EndPoint = new Point(0.5, 0),
-            GradientStops =
+            var t = (DateTime.UtcNow - _beamAnimStart).TotalMilliseconds / 280.0;
+            if (t >= 1)
             {
-                new GradientStop(Colors.Transparent, 0),
-                new GradientStop(Color.FromArgb(110, c.R, c.G, c.B), 0.5),
-                new GradientStop(Color.FromArgb(220, c.R, c.G, c.B), 1),
+                _beamDisplayAngle = _beamAnimTo;
+                _beamAnimating = false;
             }
-        };
-        // Scale beam length roughly to orbit
-        _beam.Height = _orbitRadius;
-        if (_beam.RenderTransform is TransformGroup tg && tg.Children[0] is TranslateTransform tt)
-        {
-            tt.Y = -_orbitRadius;
-            tt.X = -20;
+            else
+            {
+                // Ease-out quadratic
+                var e = 1 - (1 - t) * (1 - t);
+                _beamDisplayAngle = _beamAnimFrom + (_beamAnimTo - _beamAnimFrom) * e;
+            }
         }
+
+        var flicker = BeamFlicker((DateTime.UtcNow - _flickerStart).TotalSeconds);
+        RedrawBeam(_beamDisplayAngle, flicker.intensity, flicker.width);
+        _beamLayer.Opacity = Math.Clamp(flicker.intensity, 0.35, 1.0);
     }
 
-    private void UpdateBeamFlicker()
+    /// <summary>
+    /// Mac BeamShape: tapered trapezoid from center → icon, plus wider soft copies
+    /// so it reads as a thick light beam without relying on BlurEffect.
+    /// </summary>
+    private void RedrawBeam(double angle, double intensity, double widthFactor)
     {
-        if (_session.SelectedId == null || _warpTargetId != null) return;
-        var t = (DateTime.UtcNow - _flickerStart).TotalSeconds;
+        var center = GetCenter();
+        var length = Math.Max(_orbitRadius, 1);
+        // Mac: startWidth 8, endWidth iconSize * 0.9 * flicker.width
+        var endW = IconSize * 0.9 * widthFactor;
+
+        // Three layers: huge soft halo, medium soft, bright core
+        ApplyTrapezoid(_beamHalo, center, angle, length,
+            startWidth: 28, endWidth: endW * 1.85,
+            color: _beamColor, opacityScale: 0.18 * intensity);
+
+        ApplyTrapezoid(_beamSoft, center, angle, length,
+            startWidth: 14, endWidth: endW * 1.25,
+            color: _beamColor, opacityScale: 0.40 * intensity);
+
+        ApplyTrapezoid(_beamCore, center, angle, length,
+            startWidth: 8, endWidth: endW,
+            color: _beamColor, opacityScale: 0.85 * intensity);
+    }
+
+    private static void ApplyTrapezoid(Path path, Point center, double angle, double length,
+        double startWidth, double endWidth, Color color, double opacityScale)
+    {
+        var dirX = Math.Cos(angle);
+        var dirY = Math.Sin(angle);
+        var perpX = -dirY;
+        var perpY = dirX;
+
+        var end = new Point(center.X + dirX * length, center.Y + dirY * length);
+
+        var p0 = new Point(center.X + perpX * startWidth / 2, center.Y + perpY * startWidth / 2);
+        var p1 = new Point(end.X + perpX * endWidth / 2, end.Y + perpY * endWidth / 2);
+        var p2 = new Point(end.X - perpX * endWidth / 2, end.Y - perpY * endWidth / 2);
+        var p3 = new Point(center.X - perpX * startWidth / 2, center.Y - perpY * startWidth / 2);
+
+        var fig = new PathFigure { StartPoint = p0, IsClosed = true, IsFilled = true };
+        fig.Segments.Add(new LineSegment(p1, true));
+        fig.Segments.Add(new LineSegment(p2, true));
+        fig.Segments.Add(new LineSegment(p3, true));
+        var geo = new PathGeometry();
+        geo.Figures.Add(fig);
+        path.Data = geo;
+
+        // Fade from transparent at the hub to bright near the icon (Mac RadialGradient).
+        var a0 = (byte)0;
+        var a1 = (byte)Math.Clamp(opacityScale * 0.45 * 255, 0, 255);
+        var a2 = (byte)Math.Clamp(opacityScale * 255, 0, 255);
+
+        path.Fill = new LinearGradientBrush
+        {
+            MappingMode = BrushMappingMode.Absolute,
+            StartPoint = center,
+            EndPoint = end,
+            GradientStops =
+            {
+                new GradientStop(Color.FromArgb(a0, color.R, color.G, color.B), 0.0),
+                new GradientStop(Color.FromArgb(a1, color.R, color.G, color.B), 0.45),
+                new GradientStop(Color.FromArgb(a2, color.R, color.G, color.B), 1.0),
+            }
+        };
+    }
+
+    private (double intensity, double width) BeamFlicker(double t)
+    {
         var intensity = 0.94
             + 0.04 * Math.Sin(t * 9.3)
             + 0.03 * Math.Sin(t * 23.7 + 1.4)
@@ -444,9 +511,8 @@ public class LauncherWindow : Window
             }
         }
         intensity = Math.Max(0.3, intensity);
-        _beam.Opacity = intensity;
-        var widthScale = 1.0 + (intensity - 0.94) * 0.5;
-        _beamScale.ScaleX = widthScale;
+        var width = 1.0 + (intensity - 0.94) * 0.5;
+        return (intensity, width);
     }
 
     private static double UnitRandom(int seed, int salt)
@@ -469,8 +535,7 @@ public class LauncherWindow : Window
         if (_warpTargetId != null) return;
         _session.SelectedId = app.Id;
         _warpTargetId = app.Id;
-        _warpBegan = DateTime.UtcNow;
-        _cosmos.WarpBegan = _warpBegan;
+        _cosmos.WarpBegan = DateTime.UtcNow;
 
         foreach (var kv in _icons)
         {
@@ -578,64 +643,130 @@ public class LauncherWindow : Window
     }
 }
 
-internal sealed class AppIconElement : Grid
+/// <summary>
+/// Icon + soft radial glow. Glow is painted as gradient ellipses (not DropShadowEffect),
+/// because bitmap effects are unreliable / invisible on transparent WPF windows.
+/// The element is larger than the icon so the glow isn't clipped.
+/// </summary>
+internal sealed class AppIconElement : Canvas
 {
     private readonly Image _image;
+    private readonly Ellipse _glowOuter;
+    private readonly Ellipse _glowInner;
     private readonly Ellipse _runningDot;
-    private readonly DropShadowEffect _glow;
-    private ScaleTransform _scale = new(1, 1);
-    private bool _hovered;
-    private Color _glowColor;
+    private readonly ScaleTransform _scale = new(1, 1);
+    private readonly Color _glowColor;
+    private readonly double _iconSize;
+    public double BoxSize { get; }
 
     public AppIconElement(LauncherApp app, double size)
     {
-        Width = size;
-        Height = size;
+        _iconSize = size;
+        BoxSize = size * 2.4; // room for glow halo
+        Width = BoxSize;
+        Height = BoxSize;
+        ClipToBounds = false;
+
         _glowColor = IconCache.GlowColor(app.Path);
-        _glow = new DropShadowEffect
+
+        // Outer soft bloom
+        _glowOuter = new Ellipse
         {
-            Color = _glowColor,
-            BlurRadius = 30,
-            ShadowDepth = 0,
-            Opacity = 0.7
+            Width = size * 2.1,
+            Height = size * 2.1,
+            IsHitTestVisible = false,
+            Fill = MakeGlowBrush(_glowColor, peakAlpha: 90)
         };
-        Effect = _glow;
+        // Inner brighter core glow
+        _glowInner = new Ellipse
+        {
+            Width = size * 1.45,
+            Height = size * 1.45,
+            IsHitTestVisible = false,
+            Fill = MakeGlowBrush(_glowColor, peakAlpha: 160)
+        };
 
         _image = new Image
         {
             Source = IconCache.GetIcon(app.Path, (int)size),
             Width = size,
             Height = size,
-            Stretch = Stretch.Uniform
+            Stretch = Stretch.Uniform,
+            IsHitTestVisible = true
         };
-        RenderTransform = _scale;
-        RenderTransformOrigin = new Point(0.5, 0.5);
-        Children.Add(_image);
 
         _runningDot = new Ellipse
         {
             Width = 6,
             Height = 6,
             Fill = new SolidColorBrush(Color.FromArgb(242, 255, 255, 255)),
-            VerticalAlignment = VerticalAlignment.Bottom,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, -16),
             Visibility = Visibility.Collapsed,
-            Effect = new DropShadowEffect
+            IsHitTestVisible = false
+        };
+
+        Children.Add(_glowOuter);
+        Children.Add(_glowInner);
+        Children.Add(_image);
+        Children.Add(_runningDot);
+
+        LayoutChildren(hovered: false);
+
+        // Scale around icon center
+        var tg = new TransformGroup();
+        tg.Children.Add(_scale);
+        RenderTransform = tg;
+        RenderTransformOrigin = new Point(0.5, 0.5);
+
+        Cursor = Cursors.Hand;
+        Background = Brushes.Transparent; // hit-test the whole box lightly via image only
+    }
+
+    private void LayoutChildren(bool hovered)
+    {
+        var box = BoxSize;
+        var icon = _iconSize;
+        var glowScale = hovered ? 1.15 : 1.0;
+
+        PlaceCentered(_glowOuter, box, _glowOuter.Width * glowScale, _glowOuter.Height * glowScale);
+        // Update size for hover bloom
+        _glowOuter.Width = _iconSize * 2.1 * glowScale;
+        _glowOuter.Height = _iconSize * 2.1 * glowScale;
+        _glowInner.Width = _iconSize * 1.45 * (hovered ? 1.12 : 1.0);
+        _glowInner.Height = _iconSize * 1.45 * (hovered ? 1.12 : 1.0);
+        PlaceCentered(_glowOuter, box, _glowOuter.Width, _glowOuter.Height);
+        PlaceCentered(_glowInner, box, _glowInner.Width, _glowInner.Height);
+        PlaceCentered(_image, box, icon, icon);
+
+        Canvas.SetLeft(_runningDot, (box - 6) / 2);
+        Canvas.SetTop(_runningDot, box / 2 + icon / 2 + 8);
+    }
+
+    private static void PlaceCentered(FrameworkElement el, double box, double w, double h)
+    {
+        Canvas.SetLeft(el, (box - w) / 2);
+        Canvas.SetTop(el, (box - h) / 2);
+    }
+
+    private static RadialGradientBrush MakeGlowBrush(Color c, byte peakAlpha)
+    {
+        return new RadialGradientBrush
+        {
+            GradientOrigin = new Point(0.5, 0.5),
+            Center = new Point(0.5, 0.5),
+            RadiusX = 0.5,
+            RadiusY = 0.5,
+            GradientStops =
             {
-                Color = _glowColor,
-                BlurRadius = 4,
-                ShadowDepth = 0,
-                Opacity = 0.9
+                new GradientStop(Color.FromArgb(peakAlpha, c.R, c.G, c.B), 0.0),
+                new GradientStop(Color.FromArgb((byte)(peakAlpha * 0.55), c.R, c.G, c.B), 0.35),
+                new GradientStop(Color.FromArgb((byte)(peakAlpha * 0.18), c.R, c.G, c.B), 0.65),
+                new GradientStop(Color.FromArgb(0, c.R, c.G, c.B), 1.0),
             }
         };
-        Children.Add(_runningDot);
-        Cursor = Cursors.Hand;
     }
 
     public void SetHovered(bool hovered)
     {
-        _hovered = hovered;
         var target = hovered ? 1.14 : 1.0;
         _scale.BeginAnimation(ScaleTransform.ScaleXProperty,
             new DoubleAnimation(target, TimeSpan.FromMilliseconds(160))
@@ -643,8 +774,12 @@ internal sealed class AppIconElement : Grid
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty,
             new DoubleAnimation(target, TimeSpan.FromMilliseconds(160))
             { EasingFunction = new QuadraticEase() });
-        _glow.BlurRadius = hovered ? 46 : 30;
-        _glow.Opacity = hovered ? 0.95 : 0.7;
+
+        var peakOuter = hovered ? (byte)140 : (byte)90;
+        var peakInner = hovered ? (byte)210 : (byte)160;
+        _glowOuter.Fill = MakeGlowBrush(_glowColor, peakOuter);
+        _glowInner.Fill = MakeGlowBrush(_glowColor, peakInner);
+        LayoutChildren(hovered);
     }
 
     public void SetRunning(bool running) =>
@@ -656,8 +791,9 @@ internal sealed class AppIconElement : Grid
             new DoubleAnimation(1.5, TimeSpan.FromMilliseconds(280)));
         _scale.BeginAnimation(ScaleTransform.ScaleYProperty,
             new DoubleAnimation(1.5, TimeSpan.FromMilliseconds(280)));
-        _glow.BlurRadius = 50;
-        _glow.Opacity = 1;
+        _glowOuter.Fill = MakeGlowBrush(_glowColor, 220);
+        _glowInner.Fill = MakeGlowBrush(_glowColor, 255);
+        LayoutChildren(hovered: true);
     }
 
     public void SetWarpDimmed()
