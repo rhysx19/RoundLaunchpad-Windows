@@ -6,13 +6,14 @@ Built with **.NET 8 + WPF**. Designed to match the Mac app’s behavior and visu
 
 ## Download
 
-Every push to `main` builds on GitHub Actions. Grab the zip from the latest successful run:
+**Latest release:** https://github.com/rhysx19/RoundLaunchpad-Windows/releases/latest
 
-**Actions → Build → latest green run → Artifacts → `RoundLaunchpad-win-x64`**
+- **`RoundLaunchpad.exe`** — download and double-click (self-contained, no install)
+- **`RoundLaunchpad-win-x64.zip`** — same build, zipped
 
-Or from a Release if one has been published.
+Every push to `main` also updates the [continuous](https://github.com/rhysx19/RoundLaunchpad-Windows/releases/tag/continuous) pre-release and the Actions artifact `RoundLaunchpad-win-x64`.
 
-Unzip and run `RoundLaunchpad.exe`. No installer required (self-contained build).
+Unzip (if needed) and run `RoundLaunchpad.exe`. No .NET install required.
 
 ## Usage
 
