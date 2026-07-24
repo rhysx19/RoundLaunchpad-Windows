@@ -82,4 +82,4 @@ src/RoundLaunchpad/
 
 ## License
 
-Personal project — same ownership as the Mac RoundLaunchpad repo.
+MIT — see [LICENSE](LICENSE).
